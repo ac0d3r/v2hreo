@@ -1,4 +1,4 @@
-![](./resources/logo_on.png)
+![](./docs/logo.png)
 ### V2raySs
 
 > ⚡️【简单可用】的 MacOS V2ray-core Client GUI 🤔
