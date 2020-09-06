@@ -43,7 +43,7 @@ var (
 func New() *App {
 	once.Do(func() {
 		app = &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
-		app.subf = ".sub"
+		app.subf = "/tmp/v2rayss.sub"
 		app.pingRound = 3
 		app.lock = new(sync.Mutex)
 		app.loadSubAddr()

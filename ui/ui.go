@@ -122,8 +122,10 @@ func OnReady() {
 					}
 				}
 			case <-PingServer.ClickedCh:
-				app.Pings()
-				renderHosts(ShowServer)
+				go func() {
+					app.Pings()
+					renderHosts(ShowServer)
+				}()
 			case <-PasteSubAddr.ClickedCh:
 				addr, err := clipboard.ReadAll()
 				if err != nil {
