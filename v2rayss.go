@@ -35,34 +35,32 @@ type App struct {
 }
 
 var (
-	app *App = New()
+	once sync.Once
+	app  *App
 )
-
-// SingleCase a single instance of v2rayss app
-func SingleCase() *App {
-	return app
-}
 
 // New return an instance of v2rayss app
 func New() *App {
-	app := &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
-	app.subf = ".sub"
-	app.pingRound = 3
-	app.lock = new(sync.Mutex)
-	app.loadSubAddr()
-	app.loadServerList()
-	// init v2ray-core Inbound
-	inbound, err := vmess.Vmess2Inbound(app.listen, app.protocol, app.port)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	app.inbound = inbound
-	s, err := vmess.StartV2Ray(false, inbound, nil)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	app.coreServer = s
-	app.coreStatus = false
+	once.Do(func() {
+		app = &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
+		app.subf = ".sub"
+		app.pingRound = 3
+		app.lock = new(sync.Mutex)
+		app.loadSubAddr()
+		app.loadServerList()
+		// init v2ray-core Inbound
+		inbound, err := vmess.Vmess2Inbound(app.listen, app.protocol, app.port)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		app.inbound = inbound
+		s, err := vmess.StartV2Ray(false, inbound, nil)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		app.coreServer = s
+		app.coreStatus = false
+	})
 	return app
 }
 

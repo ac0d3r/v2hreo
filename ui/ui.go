@@ -15,7 +15,7 @@ var (
 	hostsMenu   = []*systray.MenuItem{}
 	infosMenu   = map[string]*systray.MenuItem{}
 	checkedHost = -1
-	app         = v2rayss.SingleCase()
+	app         = v2rayss.New()
 )
 
 func renderHosts(ShowServer *systray.MenuItem) {
