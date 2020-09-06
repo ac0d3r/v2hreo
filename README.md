@@ -1,7 +1,7 @@
 ![](./resources/logo_on.png)
 ### V2raySs
 
-> 【简单不算好用】的 Macos V2ray-core Client GUI 🤔233～
+> ⚡️【简单可用】的 MacOS V2ray-core Client GUI 🤔
 
 demo:
 
