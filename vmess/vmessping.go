@@ -1,8 +1,8 @@
 package vmess
 
 import (
-	"log"
 	"time"
+	"v2rayss/logs"
 )
 
 var (
@@ -24,7 +24,7 @@ func Ping(host *Host, round int, dst string) (time.Duration, error) {
 
 	defer func() {
 		if err := server.Close(); err != nil {
-			log.Println(err)
+			logs.Info(err)
 		}
 	}()
 
@@ -40,7 +40,7 @@ LOOP:
 		go func() {
 			delay, err := measureDelay(server, 5*time.Second, dst)
 			if err != nil {
-				log.Println(err)
+				logs.Info(err)
 			}
 			chDelay <- delay
 		}()

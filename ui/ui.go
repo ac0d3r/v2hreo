@@ -2,8 +2,8 @@ package ui
 
 import (
 	"fmt"
-	"log"
 	"v2rayss"
+	"v2rayss/logs"
 	"v2rayss/ui/icon"
 
 	"github.com/atotto/clipboard"
@@ -62,7 +62,7 @@ func checkHosts(index int) {
 func OnExit() {
 	err := app.Close()
 	if err != nil {
-		log.Println(err)
+		logs.Info(err)
 	}
 }
 
@@ -107,7 +107,7 @@ func OnReady() {
 				if app.CoreServStatus() == false {
 					err := app.TurnOn()
 					if err != nil {
-						log.Println(err)
+						logs.Info(err)
 					} else {
 						systray.SetIcon(icon.LogoON)
 						Switch.SetTitle("关闭")
@@ -115,7 +115,7 @@ func OnReady() {
 				} else {
 					err := app.TurnOff()
 					if err != nil {
-						log.Println(err)
+						logs.Info(err)
 					} else {
 						systray.SetIcon(icon.LogoOFF)
 						Switch.SetTitle("打开")
@@ -129,12 +129,12 @@ func OnReady() {
 			case <-PasteSubAddr.ClickedCh:
 				addr, err := clipboard.ReadAll()
 				if err != nil {
-					log.Println("parseSubaddr error: ", err)
+					logs.Info("parseSubaddr error: ", err)
 				}
 				infosMenu["subaddr"].SetTitle(fmt.Sprintf("订阅地址： %s", addr))
 				err = app.UpdateSubAddr(addr)
 				if err != nil {
-					log.Println(err)
+					logs.Info(err)
 				}
 				renderHosts(ShowServer)
 			case <-Quit.ClickedCh:

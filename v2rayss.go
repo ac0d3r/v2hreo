@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"os"
 	"sync"
 	"time"
+	"v2rayss/logs"
+	"v2rayss/utils"
 	"v2rayss/vmess"
 
 	"v2ray.com/core"
@@ -43,7 +43,11 @@ var (
 func New() *App {
 	once.Do(func() {
 		app = &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
-		app.subf = "/tmp/v2rayss.sub"
+		subf, err := utils.CheckAppTmp(".sub")
+		if err != nil {
+			logs.Fatalln(err)
+		}
+		app.subf = subf
 		app.pingRound = 3
 		app.lock = new(sync.Mutex)
 		app.loadSubAddr()
@@ -51,12 +55,12 @@ func New() *App {
 		// init v2ray-core Inbound
 		inbound, err := vmess.Vmess2Inbound(app.listen, app.protocol, app.port)
 		if err != nil {
-			log.Fatalln(err)
+			logs.Fatalln(err)
 		}
 		app.inbound = inbound
 		s, err := vmess.StartV2Ray(false, inbound, nil)
 		if err != nil {
-			log.Fatalln(err)
+			logs.Fatalln(err)
 		}
 		app.coreServer = s
 		app.coreStatus = false
@@ -122,13 +126,9 @@ func (s *App) TurnOff() error {
 */
 
 func (s *App) loadSubAddr() {
-	_, err := os.Stat(s.subf)
-	if os.IsNotExist(err) {
-		return
-	}
 	f, err := ioutil.ReadFile(s.subf)
 	if err != nil {
-		log.Println("loadSubAddr fail", err)
+		logs.Info("loadSubAddr fail", err)
 	}
 	if string(f) != "" {
 		s.subAddr = string(f)
@@ -139,9 +139,9 @@ func (s *App) storeSubAddr() {
 	if s.subAddr == "" {
 		return
 	}
-	err := ioutil.WriteFile(app.subf, []byte(s.subAddr), 0666)
+	err := ioutil.WriteFile(s.subf, []byte(s.subAddr), 0666)
 	if err != nil {
-		log.Println("storeSubAddr fail", err)
+		logs.Info("storeSubAddr fail", err)
 	}
 }
 
@@ -152,7 +152,7 @@ func (s *App) loadServerList() error {
 
 	hosts, err := vmess.ParseSubscription(s.subAddr)
 	if err != nil {
-		log.Println(err)
+		logs.Info(err)
 		return err
 	}
 	s.serverList = hosts
@@ -166,7 +166,7 @@ func (s *App) UpdateSubAddr(addr string) error {
 
 	hosts, err := vmess.ParseSubscription(addr)
 	if err != nil {
-		log.Println(err)
+		logs.Info(err)
 		return err
 	}
 	s.subAddr = addr
@@ -194,7 +194,7 @@ func (s *App) HostList() ([]string, int) {
 	if index != -1 {
 		out, err := vmess.Vmess2Outbound(s.serverList[index], true)
 		if err != nil {
-			log.Println(err)
+			logs.Info(err)
 		} else {
 			core.AddOutboundHandler(s.coreServer, out)
 		}
@@ -215,7 +215,7 @@ func (s *App) Pings() {
 	for _, host := range s.serverList {
 		t, err := vmess.Ping(host, s.pingRound, dst)
 		if err != nil {
-			log.Println(err)
+			logs.Info(err)
 		}
 		s.pings = append(s.pings, t)
 	}
