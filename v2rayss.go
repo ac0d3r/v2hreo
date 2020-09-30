@@ -43,7 +43,7 @@ var (
 func New() *App {
 	once.Do(func() {
 		app = &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
-		subf, err := utils.CheckAppTmp(".sub")
+		subf, err := utils.CheckAppDir(utils.UserDir, ".sub")
 		if err != nil {
 			logs.Fatalln(err)
 		}

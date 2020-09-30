@@ -23,7 +23,7 @@ func NewLogger(debug bool) *oslog.Logger {
 		if debug == true {
 			logger = oslog.New(os.Stderr, "", oslog.LstdFlags)
 		} else {
-			name, err := utils.CheckAppTmp("runtime.log")
+			name, err := utils.CheckAppDir(utils.TmpDir, "runtime.log")
 			out, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0666)
 			if err != nil {
 				logger = oslog.New(os.Stderr, "", oslog.LstdFlags)
