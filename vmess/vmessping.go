@@ -1,6 +1,7 @@
 package vmess
 
 import (
+	"context"
 	"time"
 	"v2rayss/logs"
 )
@@ -11,7 +12,7 @@ var (
 )
 
 // Ping check vmess host ping response speed
-func Ping(host *Host, round int, dst string) (time.Duration, error) {
+func Ping(ctx context.Context, host *Host, round int, dst string) (time.Duration, error) {
 	out, err := Vmess2Outbound(host, false)
 	if err != nil {
 		return NoPing, err
@@ -26,12 +27,6 @@ func Ping(host *Host, round int, dst string) (time.Duration, error) {
 		if err := server.Close(); err != nil {
 			logs.Info(err)
 		}
-	}()
-
-	timeout := make(chan bool, 1)
-	go func() {
-		time.Sleep(3 * time.Duration(round) * time.Second)
-		timeout <- true
 	}()
 
 LOOP:
@@ -50,10 +45,11 @@ LOOP:
 			if delay > 0 {
 				durationList = append(durationList, time.Duration(delay))
 			}
-		case <-timeout:
+		case <-ctx.Done():
 			break LOOP
 		}
 	}
+
 	if len(durationList) == 0 {
 		return NoPing, nil
 	}

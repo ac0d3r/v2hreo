@@ -1,6 +1,7 @@
 package v2rayss
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -37,6 +38,7 @@ type App struct {
 var (
 	once sync.Once
 	app  *App
+	ctx  = context.Background()
 )
 
 // New return an instance of v2rayss app
@@ -207,17 +209,39 @@ func (s *App) Pings() {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if len(s.serverList) == 0 {
+	if len(s.pings) > 0 || len(s.serverList) == 0 {
 		s.pings = []time.Duration{}
+		if len(s.serverList) == 0 {
+			return
+		}
 	}
+
 	//test destination url (vmess ping only)
+	pingData := make(chan time.Duration, len(s.serverList))
 	dst := "https://cloudflare.com/cdn-cgi/trace"
 	for _, host := range s.serverList {
-		t, err := vmess.Ping(host, s.pingRound, dst)
-		if err != nil {
-			logs.Info(err)
+		go func(host *vmess.Host, round int, dst string) {
+			ctx, cannel := context.WithTimeout(ctx, 3*time.Duration(round)*time.Second)
+			defer cannel()
+			t, err := vmess.Ping(ctx, host, round, dst)
+			if err != nil {
+				logs.Info(err)
+			}
+			pingData <- t
+		}(host, s.pingRound, dst)
+	}
+
+	count := 0
+LOOP:
+	for {
+		select {
+		case t := <-pingData:
+			s.pings = append(s.pings, t)
+			count++
+			if count >= len(s.serverList) {
+				break LOOP
+			}
 		}
-		s.pings = append(s.pings, t)
 	}
 }
 
@@ -226,17 +250,20 @@ func (s *App) autoSelectServer() int {
 		return -1
 	}
 	min := -1
-	less := vmess.NoPing
+	var fast time.Duration
 	for index, td := range s.pings {
 		if td == vmess.NoPing {
 			continue
 		}
-		if less == vmess.NoPing {
-			less = td
+		// init fast
+		if fast == 0 {
+			fast = td
+			min = index
+			continue
 		}
 		// compare ping times
-		if td < less {
-			less = td
+		if td < fast {
+			fast = td
 			min = index
 		}
 	}
