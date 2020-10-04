@@ -96,6 +96,8 @@ func OnReady() {
 	PasteSubAddr := systray.AddMenuItem("粘贴订阅地址", none)
 	ShowServer := systray.AddMenuItem("服务器列表", none)
 	PingServer := ShowServer.AddSubMenuItem("自动选择(ping)", none)
+	SelectNextServer := ShowServer.AddSubMenuItem("next", none)
+	SelectNextServer.SetIcon(icon.Next)
 	renderHosts(ShowServer)
 	systray.AddSeparator()
 	Quit := systray.AddMenuItem("退出", none)
@@ -126,6 +128,15 @@ func OnReady() {
 					app.Pings()
 					renderHosts(ShowServer)
 				}()
+			case <-SelectNextServer.ClickedCh:
+				if checkedHost != -1 {
+					index, err := app.SelectHost(checkedHost + 1)
+					if err != nil {
+						logs.Info(err)
+					} else {
+						checkHosts(index)
+					}
+				}
 			case <-PasteSubAddr.ClickedCh:
 				addr, err := clipboard.ReadAll()
 				if err != nil {

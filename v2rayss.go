@@ -54,20 +54,34 @@ func New() *App {
 		app.lock = new(sync.Mutex)
 		app.loadSubAddr()
 		app.loadServerList()
-		// init v2ray-core Inbound
-		inbound, err := vmess.Vmess2Inbound(app.listen, app.protocol, app.port)
-		if err != nil {
-			logs.Fatalln(err)
-		}
-		app.inbound = inbound
-		s, err := vmess.StartV2Ray(false, inbound, nil)
-		if err != nil {
-			logs.Fatalln(err)
-		}
-		app.coreServer = s
+		app.makeV2rayCore()
 		app.coreStatus = false
 	})
 	return app
+}
+
+func (s *App) makeV2rayCore() {
+	// makeV2rayCore init v2ray-core Inbound
+	if s.inbound == nil {
+		inbound, err := vmess.Vmess2Inbound(s.listen, s.protocol, s.port)
+		if err != nil {
+			logs.Fatalln(err)
+		} else {
+			s.inbound = inbound
+		}
+	}
+	v2core, err := vmess.StartV2Ray(false, s.inbound, nil)
+	if err != nil {
+		logs.Fatalln(err)
+		return
+	}
+	if s.coreServer == nil {
+		s.coreServer = v2core
+	} else if app.coreStatus {
+		s.coreServer.Close()
+		s.coreServer = v2core
+		s.coreServer.Start()
+	}
 }
 
 //CoreServStatus v2ray-core server status
@@ -198,10 +212,32 @@ func (s *App) HostList() ([]string, int) {
 		if err != nil {
 			logs.Info(err)
 		} else {
-			core.AddOutboundHandler(s.coreServer, out)
+			s.checkCoreServerOutbound(out)
 		}
 	}
 	return hosts, index
+}
+
+// SelectHost free choice of servers
+func (s *App) SelectHost(index int) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if index < 0 || index >= len(s.serverList) {
+		index = 0
+	}
+	out, err := vmess.Vmess2Outbound(s.serverList[index], true)
+	if err != nil {
+		logs.Info(err)
+		return -1, err
+	}
+	s.checkCoreServerOutbound(out)
+	return index, nil
+}
+
+func (s *App) checkCoreServerOutbound(out *core.OutboundHandlerConfig) {
+	s.makeV2rayCore()
+	core.AddOutboundHandler(s.coreServer, out)
 }
 
 // Pings select server index number in `s.serverList`
