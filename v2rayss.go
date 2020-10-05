@@ -75,13 +75,12 @@ func (s *App) makeV2rayCore() {
 		logs.Fatalln(err)
 		return
 	}
-	if s.coreServer == nil {
-		s.coreServer = v2core
-	} else if app.coreStatus {
+	if app.coreStatus {
 		s.coreServer.Close()
 		s.coreServer = v2core
 		s.coreServer.Start()
 	}
+	s.coreServer = v2core
 }
 
 //CoreServStatus v2ray-core server status
