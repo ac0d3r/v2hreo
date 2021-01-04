@@ -3,6 +3,7 @@ package vmess
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -18,16 +19,16 @@ type Host struct {
 	Host       string `json:"host"`
 	Path       string `json:"path"`
 	TLS        string `json:"tls"`
-	VerifyCert bool   `json:"verify_cert"`
+	VerifyCert bool   `json:"verify_cert,omitempty"`
 	Address    string `json:"add"`
 	Port       int    `json:"port"`
 	Aid        int    `json:"aid"`
 	Network    string `json:"net"`
 	Type       string `json:"type"`
-	Version    string `json:"v"`
+	Version    int    `json:"v"`
 	Ps         string `json:"ps"`
 	ID         string `json:"id"`
-	Class      int    `json:"class"`
+	Class      int    `json:"class,omitempty"`
 }
 
 // Base64Decode decode base64
@@ -40,19 +41,30 @@ func Base64Decode(data string) (string, error) {
 }
 
 // ParseSubscription parseing v2ray subscription address
-//
 func ParseSubscription(subURL string) ([]*Host, error) {
-	resp, err := http.Get(subURL)
-	if err != nil {
-		return nil, err
+	var (
+		vmessURLList string
+		body         []byte
+		resp         *http.Response
+		err          error
+	)
+	// http 协议
+	if strings.HasPrefix(subURL, "http") {
+		if resp, err = http.Get(subURL); err != nil {
+			return nil, err
+		}
+		if body, err = ioutil.ReadAll(resp.Body); err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if vmessURLList, err = Base64Decode(string(body)); err != nil {
+			return nil, err
+		}
+		return parseVmessURLList(vmessURLList, "\n"), nil
+	} else if strings.HasPrefix(subURL, VmessProtocol) {
+		return parseVmessURLList(subURL, "\n"), nil
 	}
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-	urls, err := Base64Decode(string(body))
-	if err != nil {
-		return nil, err
-	}
-	return parseVmessURLList(urls, "\n"), nil
+	return nil, errors.New("Protocol not supported")
 }
 
 func parseVmessURLList(vmessURLList, sep string) []*Host {
