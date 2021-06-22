@@ -4,310 +4,283 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"sync"
 	"time"
-	"v2rayss/logs"
-	"v2rayss/utils"
-	"v2rayss/vmess"
+	"v2rayss/core/parser"
+	"v2rayss/core/vmess"
 
 	"v2ray.com/core"
+	v2rayCore "v2ray.com/core"
+	"v2ray.com/core/app/dispatcher"
+	applog "v2ray.com/core/app/log"
+	"v2ray.com/core/app/proxyman"
+	commlog "v2ray.com/core/common/log"
+	"v2ray.com/core/common/serial"
+	"v2ray.com/core/features/inbound"
+	"v2ray.com/core/features/outbound"
 )
 
-// App of V2raySs
+type servInfo struct {
+	addr    string
+	proto   string
+	port    uint
+	subAddr string // 订阅地址
+}
+
 type App struct {
+	mu sync.Mutex
+	wg sync.WaitGroup
+
 	coreServer *core.Instance
-	lock       *sync.Mutex
-	// coreServStatus v2ray-core serv status
-	// true => started/false => closed
-	coreStatus bool
-	//subscribe address
-	subAddr string
-	subf    string
-	// serverList List of all available servers
-	serverList []*vmess.Host
-	pings      []time.Duration
+	running    bool
 	pingRound  int
-	// inbound
-	listen   string
-	protocol string
-	port     uint32
-	inbound  *core.InboundHandlerConfig
+
+	conf      *servInfo
+	selectone int
+	links     []*vmess.Link
+	pings     []time.Duration
 }
 
 var (
 	once sync.Once
 	app  *App
-	ctx  = context.Background()
 )
 
-// New return an instance of v2rayss app
-func New() *App {
+func New() (*App, error) {
+	var err error
 	once.Do(func() {
-		app = &App{listen: "127.0.0.1", protocol: "socks", port: 1080}
-		subf, err := utils.CheckAppDir(utils.UserDir, ".sub")
-		if err != nil {
-			logs.Fatalln(err)
-		}
-		app.subf = subf
-		app.pingRound = 3
-		app.lock = new(sync.Mutex)
-		app.loadSubAddr()
-		app.loadServerList()
-		app.makeV2rayCore()
-		app.coreStatus = false
+		app = &App{}
+		err = app.init()
 	})
-	return app
+	return app, err
 }
 
-func (s *App) makeV2rayCore() {
-	// makeV2rayCore init v2ray-core Inbound
-	if s.inbound == nil {
-		inbound, err := vmess.Vmess2Inbound(s.listen, s.protocol, s.port)
-		if err != nil {
-			logs.Fatalln(err)
-		} else {
-			s.inbound = inbound
-		}
+func (app *App) init() error {
+	app.conf = &servInfo{
+		addr:  "127.0.0.1",
+		port:  1080,
+		proto: "socks",
 	}
-	v2core, err := vmess.StartV2Ray(false, s.inbound, nil)
-	if err != nil {
-		logs.Fatalln(err)
-		return
-	}
-	if app.coreStatus {
-		s.coreServer.Close()
-		s.coreServer = v2core
-		s.coreServer.Start()
-	}
-	s.coreServer = v2core
-}
-
-//CoreServStatus v2ray-core server status
-func (s *App) CoreServStatus() bool {
-	return s.coreStatus
-}
-
-//StatusInfos app status info
-func (s *App) StatusInfos() map[string]string {
-	return map[string]string{
-		"listen":   s.listen,
-		"port":     fmt.Sprintf("%d", s.port),
-		"protocol": s.protocol,
-		"subaddr":  s.subAddr,
-	}
-}
-
-// TurnOn turn on v2ray-core serv
-func (s *App) TurnOn() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if s.coreServer == nil {
-		return errors.New("Not v2ray-core instance")
-	}
-	if s.coreStatus == true {
-		return errors.New("v2ray-core started")
-	}
-	err := s.coreServer.Start()
+	app.pingRound = 3
+	// set v2ray inbound
+	coreConf := makeV2rayConfig()
+	in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
 	if err != nil {
 		return err
 	}
-	s.coreStatus = true
-	return nil
-}
-
-// TurnOff turn off v2ray-core serv
-func (s *App) TurnOff() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if s.coreServer == nil {
-		return errors.New("Not v2ray-core instance")
-	}
-	if s.coreStatus == false {
-		return errors.New("v2ray-core stopped")
-	}
-	err := s.coreServer.Close()
+	coreConf.Inbound = []*core.InboundHandlerConfig{in}
+	app.coreServer, err = v2rayCore.New(coreConf)
 	if err != nil {
+		app.coreServer = nil
 		return err
 	}
-	s.coreStatus = false
 	return nil
 }
 
-/*
-	Subscribe Address part
-*/
+func (app *App) Running() bool {
+	return app.running
+}
 
-func (s *App) loadSubAddr() {
-	f, err := ioutil.ReadFile(s.subf)
-	if err != nil {
-		logs.Info("loadSubAddr fail", err)
-	}
-	if string(f) != "" {
-		s.subAddr = string(f)
+func (app *App) GetConfInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"addr":    app.conf.addr,
+		"port":    app.conf.port,
+		"proto":   app.conf.proto,
+		"subaddr": app.conf.subAddr,
 	}
 }
 
-func (s *App) storeSubAddr() {
-	if s.subAddr == "" {
-		return
-	}
-	err := ioutil.WriteFile(s.subf, []byte(s.subAddr), 0666)
-	if err != nil {
-		logs.Info("storeSubAddr fail", err)
-	}
-}
-
-// UpdateSubAddr update subscribe address
-func (s *App) loadServerList() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	hosts, err := vmess.ParseSubscription(s.subAddr)
-	if err != nil {
-		logs.Info(err)
-		return err
-	}
-	s.serverList = hosts
-	return nil
-}
-
-// UpdateSubAddr update subscribe address
-func (s *App) UpdateSubAddr(addr string) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	hosts, err := vmess.ParseSubscription(addr)
-	if err != nil {
-		logs.Info(err)
-		return err
-	}
-	s.subAddr = addr
-	s.serverList = hosts
-	return nil
-}
-
-/*
-	Servers part
-*/
-
-// HostList return app server `name-ping` list
-func (s *App) HostList() ([]string, int) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	hosts := []string{}
-	for _, host := range s.serverList {
-		hosts = append(hosts, host.Ps)
-	}
-	for i, ts := range s.pings {
-		hosts[i] = fmt.Sprintf("%s %s", ts, hosts[i])
-	}
-	index := s.autoSelectServer()
-	if index != -1 {
-		out, err := vmess.Vmess2Outbound(s.serverList[index], true)
-		if err != nil {
-			logs.Info(err)
-		} else {
-			s.checkCoreServerOutbound(out)
-		}
-	}
-	return hosts, index
-}
-
-// SelectHost free choice of servers
-func (s *App) SelectHost(index int) (int, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if index < 0 || index >= len(s.serverList) {
-		index = 0
-	}
-	out, err := vmess.Vmess2Outbound(s.serverList[index], true)
-	if err != nil {
-		logs.Info(err)
-		return -1, err
-	}
-	s.checkCoreServerOutbound(out)
-	return index, nil
-}
-
-func (s *App) checkCoreServerOutbound(out *core.OutboundHandlerConfig) {
-	s.makeV2rayCore()
-	core.AddOutboundHandler(s.coreServer, out)
-}
-
-// Pings select server index number in `s.serverList`
-func (s *App) Pings() {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if len(s.pings) > 0 || len(s.serverList) == 0 {
-		s.pings = []time.Duration{}
-		if len(s.serverList) == 0 {
-			return
-		}
-	}
-
-	//test destination url (vmess ping only)
-	pingData := make(chan time.Duration, len(s.serverList))
-	dst := "https://cloudflare.com/cdn-cgi/trace"
-	for _, host := range s.serverList {
-		go func(host *vmess.Host, round int, dst string) {
-			ctx, cannel := context.WithTimeout(ctx, 3*time.Duration(round)*time.Second)
-			defer cannel()
-			t, err := vmess.Ping(ctx, host, round, dst)
-			if err != nil {
-				logs.Info(err)
+func (app *App) SaveConfInfo(addr string, port uint, subaddr string) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if addr != app.conf.addr || port != app.conf.port {
+		if app.running {
+			if err := app.coreServer.Close(); err != nil {
+				return err
 			}
-			pingData <- t
-		}(host, s.pingRound, dst)
+			defer app.coreServer.Start()
+		}
+		app.conf.addr = addr
+		app.conf.port = port
+		in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
+		if err != nil {
+			return err
+		}
+		app.setCoreSeverDefaultIntbound(in)
 	}
+	return app.setSubAddr(addr)
+}
 
-	count := 0
-LOOP:
-	for {
-		select {
-		case t := <-pingData:
-			s.pings = append(s.pings, t)
-			count++
-			if count >= len(s.serverList) {
-				break LOOP
+func (app *App) setCoreSeverDefaultIntbound(in *core.InboundHandlerConfig) error {
+	inboundManager := app.coreServer.GetFeature(inbound.ManagerType()).(inbound.Manager)
+	rawHandler, err := core.CreateObject(app.coreServer, in)
+	if err != nil {
+		return err
+	}
+	handler, ok := rawHandler.(inbound.Handler)
+	if !ok {
+		return errors.New("not an InboundHandler")
+	}
+	// remove old inbound
+	if err := inboundManager.RemoveHandler(context.Background(), "proxy"); err != nil {
+		return err
+	}
+	// add new in
+	if err := inboundManager.AddHandler(context.Background(), handler); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (app *App) SetSubAddr(addr string) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.setSubAddr(addr)
+}
+
+func (app *App) setSubAddr(addr string) error {
+	if addr != app.conf.subAddr {
+		app.conf.subAddr = addr
+		return app.loadSubAddr()
+	}
+	return nil
+}
+
+func (app *App) LoadSubAddr() error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.LoadSubAddr()
+}
+
+func (app *App) loadSubAddr() error {
+	links, err := parser.Parse(app.conf.subAddr)
+	if err != nil {
+		return err
+	}
+	app.links = links
+	app.pings = make([]time.Duration, len(app.links))
+	return nil
+}
+
+func (app *App) PingLinks() error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.links == nil {
+		return nil
+	}
+	app.makePings()
+	for i := range app.links {
+		app.wg.Add(1)
+		go func(i int) {
+			defer app.wg.Done()
+			t, err := app.links[i].Ping(app.pingRound, "https://cloudflare.com/cdn-cgi/trace")
+			if err == nil {
+				app.pings[i] = t
+			} else {
+				app.pings[i] = vmess.NoPing
 			}
-		}
+		}(i)
+	}
+	app.wg.Wait()
+	return nil
+}
+
+func (app *App) ListHosts() []string {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.links == nil {
+		return nil
+	}
+	app.makePings()
+	res := make([]string, len(app.links))
+	for i := range app.links {
+		res[i] = fmt.Sprintf("%s - %s", app.pings[i], app.links[i].Ps)
+	}
+	return res
+}
+
+func (app *App) makePings() {
+	if app.pings == nil {
+		app.pings = make([]time.Duration, len(app.links))
 	}
 }
 
-func (s *App) autoSelectServer() int {
-	if len(s.pings) == 0 {
-		return -1
+func (app *App) SelectLink(index int) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if index < 0 && index >= len(app.links) {
+		return errors.New("Index overflow")
 	}
-	min := -1
-	var fast time.Duration
-	for index, td := range s.pings {
-		if td == vmess.NoPing {
-			continue
-		}
-		// init fast
-		if fast == 0 {
-			fast = td
-			min = index
-			continue
-		}
-		// compare ping times
-		if td < fast {
-			fast = td
-			min = index
-		}
+	app.selectone = index
+	out, err := vmess.Vmess2Outbound(app.links[app.selectone], true)
+	if err != nil {
+		return err
 	}
-	return min
+	if app.running {
+		if err := app.coreServer.Close(); err != nil {
+			return err
+		}
+		defer app.coreServer.Start()
+	}
+	app.setCoreSeverDefaultOutbound(out)
+	return nil
 }
 
-// Close v2rayss app
-func (s *App) Close() error {
-	err := s.TurnOff()
-	s.storeSubAddr()
-	return err
+func (app *App) setCoreSeverDefaultOutbound(out *core.OutboundHandlerConfig) error {
+	outboundManager := app.coreServer.GetFeature(outbound.ManagerType()).(outbound.Manager)
+	rawHandler, err := core.CreateObject(app.coreServer, out)
+	if err != nil {
+		return err
+	}
+	handler, ok := rawHandler.(outbound.Handler)
+	if !ok {
+		return errors.New("not an OutboundHandler")
+	}
+	// remove old out
+	if h := outboundManager.GetHandler("proxy"); h != nil {
+		if err := outboundManager.RemoveHandler(context.Background(), "proxy"); err != nil {
+			return err
+		}
+	}
+	// add new out
+	if err := outboundManager.AddHandler(context.Background(), handler); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (app *App) Start() error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.running {
+		return nil
+	}
+	app.running = true
+	return app.coreServer.Start()
+}
+
+func (app *App) Close() error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if !app.running {
+		return nil
+	}
+	app.running = false
+	return app.coreServer.Close()
+}
+
+func makeV2rayConfig() *core.Config {
+	return &core.Config{
+		App: []*serial.TypedMessage{
+			serial.ToTypedMessage(&applog.Config{
+				ErrorLogType:  applog.LogType_Console,
+				ErrorLogLevel: commlog.Severity_Error,
+			}),
+			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(&proxyman.InboundConfig{}),
+			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
+		},
+		Outbound: make([]*core.OutboundHandlerConfig, 0, 1),
+		Inbound:  make([]*core.InboundHandlerConfig, 0, 1),
+	}
 }
