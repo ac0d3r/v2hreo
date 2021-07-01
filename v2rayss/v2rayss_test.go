@@ -17,8 +17,8 @@ func TestV2raySs(t *testing.T) {
 	t.Log(appt.ListHosts())
 	t.Log(appt.SelectLink(10))
 	t.Log(appt.Start())
-	time.Sleep(50 * time.Second)
+	time.Sleep(10 * time.Second)
 	t.Log("select an other one", appt.SelectLink(8))
-	time.Sleep(50 * time.Second)
+	time.Sleep(10 * time.Second)
 	t.Log(appt.Close())
 }

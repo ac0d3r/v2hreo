@@ -94,21 +94,35 @@ func (app *App) SaveConfInfo(addr string, port uint, subaddr string) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if addr != app.conf.addr || port != app.conf.port {
-		if app.running {
-			if err := app.coreServer.Close(); err != nil {
+		if err := v2rayServeRunningHook(app.running, app.coreServer, func() error {
+			// set v2ray in bound
+			app.conf.addr = addr
+			app.conf.port = port
+			in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
+			if err != nil {
 				return err
 			}
-			defer app.coreServer.Start()
-		}
-		app.conf.addr = addr
-		app.conf.port = port
-		in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
-		if err != nil {
+			return app.setCoreSeverDefaultIntbound(in)
+		}); err != nil {
 			return err
 		}
-		app.setCoreSeverDefaultIntbound(in)
 	}
 	return app.setSubAddr(addr)
+}
+
+func v2rayServeRunningHook(running bool, server *v2rayCore.Instance, f func() error) error {
+	if running {
+		if err := server.Close(); err != nil {
+			return err
+		}
+	}
+	if err := f(); err != nil {
+		return err
+	}
+	if running {
+		return server.Start()
+	}
+	return nil
 }
 
 func (app *App) setCoreSeverDefaultIntbound(in *core.InboundHandlerConfig) error {
@@ -126,10 +140,7 @@ func (app *App) setCoreSeverDefaultIntbound(in *core.InboundHandlerConfig) error
 		return err
 	}
 	// add new in
-	if err := inboundManager.AddHandler(context.Background(), handler); err != nil {
-		return err
-	}
-	return nil
+	return inboundManager.AddHandler(context.Background(), handler)
 }
 
 func (app *App) SetSubAddr(addr string) error {
@@ -149,7 +160,7 @@ func (app *App) setSubAddr(addr string) error {
 func (app *App) LoadSubAddr() error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	return app.LoadSubAddr()
+	return app.loadSubAddr()
 }
 
 func (app *App) loadSubAddr() error {
@@ -208,22 +219,18 @@ func (app *App) makePings() {
 func (app *App) SelectLink(index int) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	if index < 0 && index >= len(app.links) {
+	if index < 0 || index >= len(app.links) {
 		return errors.New("Index overflow")
 	}
-	app.selectone = index
-	out, err := vmess.Vmess2Outbound(app.links[app.selectone], true)
-	if err != nil {
-		return err
-	}
-	if app.running {
-		if err := app.coreServer.Close(); err != nil {
+	return v2rayServeRunningHook(app.running, app.coreServer, func() error {
+		// set v2ray out bound
+		app.selectone = index
+		out, err := vmess.Vmess2Outbound(app.links[app.selectone], true)
+		if err != nil {
 			return err
 		}
-		defer app.coreServer.Start()
-	}
-	app.setCoreSeverDefaultOutbound(out)
-	return nil
+		return app.setCoreSeverDefaultOutbound(out)
+	})
 }
 
 func (app *App) setCoreSeverDefaultOutbound(out *core.OutboundHandlerConfig) error {
@@ -243,10 +250,7 @@ func (app *App) setCoreSeverDefaultOutbound(out *core.OutboundHandlerConfig) err
 		}
 	}
 	// add new out
-	if err := outboundManager.AddHandler(context.Background(), handler); err != nil {
-		return err
-	}
-	return nil
+	return outboundManager.AddHandler(context.Background(), handler)
 }
 
 func (app *App) Start() error {
