@@ -1,0 +1,5 @@
+module V2rayss {
+    header "libv2rayss.h"
+    link "v2rayss"
+    export *
+}
