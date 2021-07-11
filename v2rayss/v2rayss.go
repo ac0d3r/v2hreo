@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 	"v2rayss/core/parser"
 	"v2rayss/core/vmess"
 
-	"v2ray.com/core"
 	v2rayCore "v2ray.com/core"
 	"v2ray.com/core/app/dispatcher"
 	applog "v2ray.com/core/app/log"
@@ -31,14 +29,13 @@ type App struct {
 	mu sync.Mutex
 	wg sync.WaitGroup
 
-	coreServer *core.Instance
+	coreServer *v2rayCore.Instance
 	running    bool
 	pingRound  int
 
 	conf      *servInfo
 	selectone int
 	links     []*vmess.Link
-	pings     []time.Duration
 }
 
 var (
@@ -63,12 +60,12 @@ func (app *App) init() error {
 	}
 	app.pingRound = 3
 	// set v2ray inbound
-	coreConf := makeV2rayConfig()
 	in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
 	if err != nil {
 		return err
 	}
-	coreConf.Inbound = []*core.InboundHandlerConfig{in}
+	coreConf := makeV2rayConfig()
+	coreConf.Inbound = []*v2rayCore.InboundHandlerConfig{in}
 	app.coreServer, err = v2rayCore.New(coreConf)
 	if err != nil {
 		app.coreServer = nil
@@ -90,13 +87,14 @@ func (app *App) GetConfInfo() map[string]interface{} {
 	}
 }
 
-func (app *App) SaveConfInfo(addr string, port uint, subaddr string) error {
+func (app *App) SaveConfInfo(addr, protocol string, port uint, subaddr string) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	if addr != app.conf.addr || port != app.conf.port {
+	if addr != app.conf.addr || protocol != app.conf.proto || port != app.conf.port {
 		if err := v2rayServeRunningHook(app.running, app.coreServer, func() error {
 			// set v2ray in bound
 			app.conf.addr = addr
+			app.conf.proto = protocol
 			app.conf.port = port
 			in, err := vmess.Vmess2Inbound(app.conf.addr, app.conf.proto, uint32(app.conf.port))
 			if err != nil {
@@ -107,7 +105,11 @@ func (app *App) SaveConfInfo(addr string, port uint, subaddr string) error {
 			return err
 		}
 	}
-	return app.setSubAddr(addr)
+	if subaddr != app.conf.subAddr {
+		app.conf.subAddr = subaddr
+		return app.setSubAddr(subaddr)
+	}
+	return nil
 }
 
 func v2rayServeRunningHook(running bool, server *v2rayCore.Instance, f func() error) error {
@@ -125,9 +127,9 @@ func v2rayServeRunningHook(running bool, server *v2rayCore.Instance, f func() er
 	return nil
 }
 
-func (app *App) setCoreSeverDefaultIntbound(in *core.InboundHandlerConfig) error {
+func (app *App) setCoreSeverDefaultIntbound(in *v2rayCore.InboundHandlerConfig) error {
 	inboundManager := app.coreServer.GetFeature(inbound.ManagerType()).(inbound.Manager)
-	rawHandler, err := core.CreateObject(app.coreServer, in)
+	rawHandler, err := v2rayCore.CreateObject(app.coreServer, in)
 	if err != nil {
 		return err
 	}
@@ -169,7 +171,6 @@ func (app *App) loadSubAddr() error {
 		return err
 	}
 	app.links = links
-	app.pings = make([]time.Duration, len(app.links))
 	return nil
 }
 
@@ -179,16 +180,14 @@ func (app *App) PingLinks() error {
 	if app.links == nil {
 		return nil
 	}
-	app.makePings()
 	for i := range app.links {
 		app.wg.Add(1)
 		go func(i int) {
 			defer app.wg.Done()
-			t, err := app.links[i].Ping(app.pingRound, "https://cloudflare.com/cdn-cgi/trace")
-			if err == nil {
-				app.pings[i] = t
+			if t, err := app.links[i].Ping(app.pingRound, "https://cloudflare.com/cdn-cgi/trace"); err == nil {
+				app.links[i].PingTime = t
 			} else {
-				app.pings[i] = vmess.NoPing
+				app.links[i].PingTime = vmess.NoPing
 			}
 		}(i)
 	}
@@ -200,27 +199,20 @@ func (app *App) ListHosts() []string {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if app.links == nil {
-		return nil
+		return []string{}
 	}
-	app.makePings()
 	res := make([]string, len(app.links))
 	for i := range app.links {
-		res[i] = fmt.Sprintf("%s - %s", app.pings[i], app.links[i].Ps)
+		res[i] = fmt.Sprintf("%s - %s", app.links[i].PingTime, app.links[i].Ps)
 	}
 	return res
-}
-
-func (app *App) makePings() {
-	if app.pings == nil {
-		app.pings = make([]time.Duration, len(app.links))
-	}
 }
 
 func (app *App) SelectLink(index int) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if index < 0 || index >= len(app.links) {
-		return errors.New("Index overflow")
+		return errors.New("Links index overflow")
 	}
 	return v2rayServeRunningHook(app.running, app.coreServer, func() error {
 		// set v2ray out bound
@@ -233,9 +225,9 @@ func (app *App) SelectLink(index int) error {
 	})
 }
 
-func (app *App) setCoreSeverDefaultOutbound(out *core.OutboundHandlerConfig) error {
+func (app *App) setCoreSeverDefaultOutbound(out *v2rayCore.OutboundHandlerConfig) error {
 	outboundManager := app.coreServer.GetFeature(outbound.ManagerType()).(outbound.Manager)
-	rawHandler, err := core.CreateObject(app.coreServer, out)
+	rawHandler, err := v2rayCore.CreateObject(app.coreServer, out)
 	if err != nil {
 		return err
 	}
@@ -273,8 +265,8 @@ func (app *App) Close() error {
 	return app.coreServer.Close()
 }
 
-func makeV2rayConfig() *core.Config {
-	return &core.Config{
+func makeV2rayConfig() *v2rayCore.Config {
+	return &v2rayCore.Config{
 		App: []*serial.TypedMessage{
 			serial.ToTypedMessage(&applog.Config{
 				ErrorLogType:  applog.LogType_Console,
@@ -284,7 +276,7 @@ func makeV2rayConfig() *core.Config {
 			serial.ToTypedMessage(&proxyman.InboundConfig{}),
 			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
 		},
-		Outbound: make([]*core.OutboundHandlerConfig, 0, 1),
-		Inbound:  make([]*core.InboundHandlerConfig, 0, 1),
+		Outbound: make([]*v2rayCore.OutboundHandlerConfig, 0, 1),
+		Inbound:  make([]*v2rayCore.InboundHandlerConfig, 0, 1),
 	}
 }

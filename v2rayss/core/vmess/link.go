@@ -20,16 +20,17 @@ var (
 )
 
 type Link struct {
-	Ps   string      `json:"ps"`
-	Host string      `json:"host"`
-	Add  string      `json:"add"`
-	Port interface{} `json:"port"`
-	ID   string      `json:"id"`
-	Aid  interface{} `json:"aid"`
-	Net  string      `json:"net"`
-	Type string      `json:"type"`
-	Path string      `json:"path"`
-	TLS  string      `json:"tls"`
+	Ps       string        `json:"ps"`
+	Host     string        `json:"host"`
+	Add      string        `json:"add"`
+	Port     interface{}   `json:"port"`
+	ID       string        `json:"id"`
+	Aid      interface{}   `json:"aid"`
+	Net      string        `json:"net"`
+	Type     string        `json:"type"`
+	Path     string        `json:"path"`
+	TLS      string        `json:"tls"`
+	PingTime time.Duration `json:"-"`
 }
 
 func (lk *Link) Conf() string {

@@ -16,3 +16,6 @@
 .vscode/
 .sub
 .DS_Store
+
+libv2rayss.a
+libv2rayss.h
