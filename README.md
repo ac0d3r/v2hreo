@@ -20,3 +20,21 @@ Swift 联动 CGO 开发的 V2ray MacOS 菜单栏应用。
 ## 预览
 
 ![](https://user-images.githubusercontent.com/26270009/125184897-0097a300-e254-11eb-973b-8970549c1a8f.png)
+
+## Tips  
+**自己创建项目时需要注意：**
+1. 编译 go 代码：`CGO_ENABLED=1 go build --buildmode=c-archive  -o libdemo.a demo.go`
+2. 在 Swift 项目`$(SRCROOT)`目录下创建 `module.modulemap` 文件：
+    ```
+    module Demo {
+        header "libdemo.h"
+        link "demo"
+        export *
+    }
+   ```
+    具体请查看[文档](https://clang.llvm.org/docs/Modules.html)
+3. 为 Swift 项目设置 modulemap：在 Xcode 中将 `LIBRARY_SEARCH_PATHS` 和 `SWIFT_INCLUDE_PATHS` 的值修改为：`$(SRCROOT)`。
+
+## Thx
+- https://youngdynasty.net/posts/writing-mac-apps-in-go/
+- https://juejin.cn/post/6844904101877121037
